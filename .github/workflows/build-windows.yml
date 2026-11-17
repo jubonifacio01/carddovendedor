@@ -1,0 +1,36 @@
+name: Build instalador Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Compilar Card do Vendedor para Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Instalar Rust estável
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Instalar dependências do projeto
+        run: npm install
+
+      - name: Compilar e gerar instaladores
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles nsis
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: Card-do-Vendedor-[bundle]
