@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
-  Activity, Archive, ArrowDownToLine, CalendarDays, Check, ChevronRight,
+  Archive, ArrowDownToLine, CalendarDays, Check, ChevronRight,
   CircleHelp, ClipboardList, CloudOff, FileSpreadsheet, History, Maximize2,
   Minimize2, Minus, Plus, Settings2, ShieldCheck, Smartphone, Target,
-  Trash2, Truck, X,
+  Trash2, Truck, X, Undo2, Pencil,
 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -59,6 +59,9 @@ function App() {
   const initialWindowModeApplied = useRef(false);
   const [draft, setDraft] = useState<DailyEntry>(EMPTY_ENTRY(todayISO()));
   const [draftDirty, setDraftDirty] = useState(false);
+  const [lastAction, setLastAction] = useState<{ date: string; field: EntryField; previousValue: number; label: string } | null>(null);
+  const [editingField, setEditingField] = useState<EntryField | null>(null);
+  const [editingValue, setEditingValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [profileDraft, setProfileDraft] = useState<Profile>(emptyProfile());
   const [profileModal, setProfileModal] = useState(false);
@@ -236,7 +239,65 @@ function App() {
     const safeValue = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
     setDraft((current) => ({ ...current, [field]: safeValue, updatedAt: new Date().toISOString() }));
     setDraftDirty(true);
+    setLastAction(null);
   };
+
+  const registerIncrement = (field: EntryField) => {
+    const previousValue = draft[field];
+    const fieldLabel = field === 'monthlyProductQty'
+      ? selectedMonthlyProduct.name
+      : SERVICE_LABELS[field as keyof typeof SERVICE_LABELS];
+    updateValue(field, previousValue + 1);
+    setLastAction({ date: selectedDate, field, previousValue, label: fieldLabel });
+  };
+
+  const undoLastIncrement = () => {
+    if (!lastAction || lastAction.date !== selectedDate) return;
+    updateValue(lastAction.field, lastAction.previousValue);
+    setLastAction(null);
+    notify(`Último lançamento desfeito: ${lastAction.label}.`);
+  };
+
+  const beginQuantityEdit = (field: EntryField) => {
+    setEditingField(field);
+    setEditingValue(String(draft[field]));
+  };
+
+  const commitQuantityEdit = () => {
+    if (!editingField) return;
+    const parsed = Number(editingValue);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      notify('Informe uma quantidade válida, igual ou maior que zero.');
+      return;
+    }
+    updateValue(editingField, Math.floor(parsed));
+    setEditingField(null);
+  };
+
+  // Atalhos numéricos reduzem a necessidade de trocar o mouse pelo teclado durante o atendimento.
+  useEffect(() => {
+    const handleQuickKeys = (event: KeyboardEvent) => {
+      if (tab !== 'entry' || compactMode || profileModal || campaignModal || editingField) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.matches('input, textarea, select') || active?.isContentEditable) return;
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        if (lastAction?.date === selectedDate) {
+          event.preventDefault();
+          undoLastIncrement();
+        }
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+      if (!/^[1-7]$/.test(event.key)) return;
+      const fields: EntryField[] = ['pac', 'sedex', 'premium', 'vd', 'ar', 'packaging', 'monthlyProductQty'];
+      event.preventDefault();
+      registerIncrement(fields[Number(event.key) - 1]);
+    };
+
+    window.addEventListener('keydown', handleQuickKeys);
+    return () => window.removeEventListener('keydown', handleQuickKeys);
+  }, [tab, compactMode, profileModal, campaignModal, editingField, lastAction, selectedDate, draft, selectedMonthlyProduct.name]);
 
 
   const removeEntry = async (date: string) => {
@@ -539,36 +600,51 @@ function App() {
         </header>
       ) : (
         <header
-          className="window-header"
+          className="window-header refined-header"
           onMouseDown={startWindowDrag}
           onDoubleClick={(event) => {
-            if (!(event.target as HTMLElement).closest('button')) void toggleWindowSize();
+            if (!(event.target as HTMLElement).closest('button, input, label')) void toggleWindowSize();
           }}
         >
-          <div className="brand-mark"><Truck size={19} strokeWidth={2.2} /></div>
-          <div className="brand-title">
+          <div className="brand-mark"><Truck size={18} strokeWidth={2.2} /></div>
+          <div className="brand-title refined-brand-title">
             <strong>Card do Vendedor</strong>
-            <span>Painel rápido · Correios</span>
+            <span>Apontamento rápido</span>
           </div>
-          <div className="header-profile">
+          <div className="header-profile refined-header-profile" title={`${appState.profile?.name || ''} · ${appState.profile?.agency || ''}`}>
             <div className="avatar">{appState.profile?.name?.slice(0, 1).toLocaleUpperCase('pt-BR') || 'A'}</div>
             <div className="profile-info">
               <strong>{appState.profile?.name || 'Configure seu perfil'}</strong>
               <span>{appState.profile?.agency || 'Agência não informada'}</span>
             </div>
-            <div className="local-status"><span className="status-dot" /> Local</div>
           </div>
-          <nav className="tabs top-tabs" aria-label="Navegação principal">
-            <button className={tab === 'entry' ? 'tab active' : 'tab'} onClick={() => setTab('entry')}><Plus size={14} /> Lançar</button>
-            <button className={tab === 'history' ? 'tab active' : 'tab'} onClick={() => setTab('history')}><History size={14} /> Histórico</button>
-            <button className={tab === 'report' ? 'tab active' : 'tab'} onClick={() => setTab('report')}><FileSpreadsheet size={14} /> Relatório</button>
+          {tab === 'entry' && (
+            <div className="header-date-control" title="Data dos lançamentos">
+              <CalendarDays size={14} />
+              <input aria-label="Data do lançamento" type="date" value={selectedDate} onChange={(event) => {
+                shouldFollowTodayRef.current = event.target.value === systemDate;
+                setSelectedDate(event.target.value);
+                setLastAction(null);
+                setEditingField(null);
+              }} />
+              {selectedDate !== systemDate && <button type="button" onClick={() => {
+                shouldFollowTodayRef.current = true;
+                setSelectedDate(systemDate);
+                setLastAction(null);
+                setEditingField(null);
+              }}>Hoje</button>}
+            </div>
+          )}
+          <nav className="tabs top-tabs refined-tabs" aria-label="Navegação principal">
+            <button className={tab === 'entry' ? 'tab active' : 'tab'} onClick={() => setTab('entry')}><Plus size={13} /><span>Lançar</span></button>
+            <button className={tab === 'history' ? 'tab active' : 'tab'} onClick={() => { setLastAction(null); setTab('history'); }}><History size={13} /><span>Histórico</span></button>
+            <button className={tab === 'report' ? 'tab active' : 'tab'} onClick={() => { setLastAction(null); setTab('report'); }}><FileSpreadsheet size={13} /><span>Relatório</span></button>
           </nav>
-          <div className="header-actions">
-            <button className="window-control settings-control" title="Identificação e metas" onClick={openProfile}><Settings2 size={17} /></button>
-            <button className="window-control compact-toggle" title="Modo compacto · aproximadamente 10 × 3 cm" onClick={() => void switchDisplayMode(true)}><Minimize2 size={16} /></button>
-            <button className="window-control" title="Minimizar janela" onClick={minimizeWindow}><Minus size={17} /></button>
-            <button className="window-control" title={windowMaximized ? 'Restaurar janela' : 'Maximizar janela'} onClick={toggleWindowSize}>{windowMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-            <button className="window-control close-button" title="Ocultar na bandeja" onClick={hideWindow}><X size={17} /></button>
+          <div className="header-actions refined-header-actions">
+            <button className="window-control compact-toggle" title="Modo micro · aproximadamente 10 × 3 cm" onClick={() => void switchDisplayMode(true)}><Minimize2 size={15} /></button>
+            <button className="window-control" title="Minimizar janela" onClick={minimizeWindow}><Minus size={16} /></button>
+            <button className="window-control" title={windowMaximized ? 'Restaurar janela' : 'Maximizar janela'} onClick={toggleWindowSize}>{windowMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
+            <button className="window-control close-button" title="Ocultar na bandeja" onClick={hideWindow}><X size={16} /></button>
           </div>
         </header>
       )}
@@ -592,7 +668,7 @@ function App() {
                   <div className="compact-count-line">
                     <strong className="compact-count" aria-live="polite">{draft[field]}</strong>
                   </div>
-                  <button className="compact-increment" aria-label={`Registrar mais um: ${fieldLabel}`} title={`Registrar mais um: ${fieldLabel}`} onClick={() => updateValue(field, draft[field] + 1)}>+1</button>
+                  <button className="compact-increment" aria-label={`Registrar mais um: ${fieldLabel}`} title={`Registrar mais um: ${fieldLabel}`} onClick={() => registerIncrement(field)}>+1</button>
                 </article>
               );
             })}
@@ -600,21 +676,22 @@ function App() {
         )}
         {!compactMode && tab === 'entry' && (
           <>
-            <div className="section-heading quick-entry-heading">
-              <div className="quick-heading-copy">
-                <p className="eyebrow">APONTAMENTO DO DIA</p>
-                <h1>Lançamentos</h1>
+            <div className="quick-entry-toolbar">
+              <div className="quick-entry-date-label">
+                <span>LANÇAMENTOS DO DIA</span>
+                <strong>{formatDate(selectedDate)}</strong>
               </div>
-              <div className="date-control">
-                <CalendarDays size={16} />
-                <input aria-label="Data do lançamento" type="date" value={selectedDate} onChange={(event) => { shouldFollowTodayRef.current = event.target.value === systemDate; setSelectedDate(event.target.value); }} />
-                <button type="button" className={selectedDate === systemDate ? 'today-button today-active' : 'today-button'} onClick={() => { shouldFollowTodayRef.current = true; setSelectedDate(systemDate); }} title="Ir para a data de hoje">Hoje</button>
+              <div className="quick-entry-hints">
+                <span className="keyboard-hint"><kbd>1–7</kbd> atalhos do teclado</span>
+                {lastAction?.date === selectedDate && (
+                  <button className="undo-inline" onClick={undoLastIncrement} title="Desfazer último lançamento · Ctrl+Z"><Undo2 size={13} /> Desfazer</button>
+                )}
+                <span className="quick-save-state"><ShieldCheck size={14} /> {saving || draftDirty ? 'Salvando…' : 'Salvo'}</span>
               </div>
-              <span className="quick-save-state"><ShieldCheck size={14} /> {saving || draftDirty ? 'Salvando…' : 'Salvo automaticamente'}</span>
             </div>
 
-            <div className="service-grid quick-service-grid">
-              {([...Object.keys(SERVICE_LABELS), 'monthlyProductQty'] as EntryField[]).map((field) => {
+            <div className="service-grid refined-service-grid" aria-label="Toque em um serviço para registrar uma unidade">
+              {([...Object.keys(SERVICE_LABELS), 'monthlyProductQty'] as EntryField[]).map((field, index) => {
                 const isMonthlyProduct = field === 'monthlyProductQty';
                 const fieldLabel = isMonthlyProduct ? selectedMonthlyProduct.name : SERVICE_LABELS[field as keyof typeof SERVICE_LABELS];
                 const dailyRates = calculateRates(draft);
@@ -626,42 +703,80 @@ function App() {
                 const descriptor = field === 'pac'
                   ? 'Base de encomendas'
                   : isMonthlyProduct
-                    ? `Produto do mês · ${selectedMonthlyProduct.target > 0 ? `Meta ${selectedMonthlyProduct.target} un.` : 'Meta não definida'}`
-                    : `Participação: ${formatPercent(rate ?? 0)}`;
+                    ? `${selectedProductTotal} no mês${selectedMonthlyProduct.target > 0 ? ` · Meta ${selectedMonthlyProduct.target}` : ''}`
+                    : `Participação ${formatPercent(rate ?? 0)}`;
+                const editing = editingField === field;
                 return (
-                  <article className={`service-card ${isMonthlyProduct ? 'cellular-card campaign-service-card' : ''} ${field === 'pac' ? 'base-card' : ''}`} key={field}>
-                    <div className="service-title-row">
-                      <span className={`service-symbol symbol-${isMonthlyProduct ? 'cellular' : field}`}>{isMonthlyProduct ? <Smartphone size={16} /> : field === 'pac' || field === 'sedex' ? <Truck size={16} /> : <Archive size={16} />}</span>
-                      <div className="service-title">
+                  <article
+                    className={`quick-tile ${isMonthlyProduct ? 'quick-tile-campaign' : ''} ${field === 'pac' ? 'quick-tile-base' : ''}`}
+                    key={field}
+                    role="group"
+                    tabIndex={0}
+                    aria-label={`${fieldLabel}: ${draft[field]} unidades. Clique no cartão para adicionar uma unidade; clique no número para corrigir.`}
+                    onClick={(event) => {
+                      if ((event.target as HTMLElement).closest('button, input')) return;
+                      if (editingField) return;
+                      registerIncrement(field);
+                    }}
+                    onKeyDown={(event) => {
+                      if ((event.target as HTMLElement) !== event.currentTarget) return;
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        if (!editingField) registerIncrement(field);
+                      }
+                    }}
+                  >
+                    <div className="quick-tile-top">
+                      <span className={`quick-tile-icon symbol-${isMonthlyProduct ? 'cellular' : field}`}>
+                        {isMonthlyProduct ? <Smartphone size={16} /> : field === 'pac' || field === 'sedex' ? <Truck size={16} /> : <Archive size={16} />}
+                      </span>
+                      <div className="quick-tile-labels">
                         <strong title={fieldLabel}>{fieldLabel}</strong>
-                        <span title={descriptor}>{isMonthlyProduct
-                          ? `${selectedMonthlyProduct.target > 0 ? `Meta ${selectedMonthlyProduct.target}` : 'Sem meta'} · ${selectedProductTotal} no mês`
-                          : descriptor}</span>
+                        <span title={descriptor}>{descriptor}</span>
                       </div>
-                      {isMonthlyProduct && <button className="campaign-edit-mini" onClick={() => openCampaignSettings(selectedMonth)} title="Alterar produto e meta"><Settings2 size={14} /></button>}
+                      <kbd className="tile-shortcut" title={`Atalho ${index + 1}`}>{index + 1}</kbd>
+                      {isMonthlyProduct && <button className="quick-tile-config" onClick={(event) => { event.stopPropagation(); void openCampaignSettings(selectedMonth); }} title="Alterar produto e meta"><Settings2 size={13} /></button>}
                     </div>
-                    {isMonthlyProduct && selectedMonthlyProduct.target > 0 && <div className="campaign-progress" aria-label={`${Math.round(selectedProductProgress)}% da meta alcançada`}><span style={{ width: `${selectedProductProgress}%` }} /></div>}
-                    <div className="counter-row">
-                      <button className="counter-button" aria-label={`Diminuir ${fieldLabel}`} onClick={() => updateValue(field, draft[field] - 1)} disabled={draft[field] <= 0}><Minus size={16} /></button>
-                      <input
-                        className="count-input"
-                        aria-label={`Quantidade ${fieldLabel}`}
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={draft[field]}
-                        onChange={(event) => updateValue(field, Number(event.target.value))}
-                      />
-                      <button className="counter-button plus quick-add" aria-label={`Registrar mais um: ${fieldLabel}`} onClick={() => updateValue(field, draft[field] + 1)}><Plus size={16} /><span>+1</span></button>
+                    <div className="quick-tile-bottom">
+                      {editing ? (
+                        <div className="quick-tile-editor" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            aria-label={`Corrigir quantidade de ${fieldLabel}`}
+                            type="number"
+                            min="0"
+                            step="1"
+                            autoFocus
+                            value={editingValue}
+                            onChange={(event) => setEditingValue(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') { event.preventDefault(); commitQuantityEdit(); }
+                              if (event.key === 'Escape') { event.preventDefault(); setEditingField(null); }
+                            }}
+                          />
+                          <button onClick={commitQuantityEdit} title="Salvar quantidade"><Check size={14} /></button>
+                          <button onClick={() => setEditingField(null)} title="Cancelar edição"><X size={13} /></button>
+                        </div>
+                      ) : (
+                        <button className="quick-tile-count" aria-live="polite" onClick={(event) => { event.stopPropagation(); beginQuantityEdit(field); }} title="Clique no número para corrigir a quantidade" aria-label={`Editar quantidade ${fieldLabel}`}>
+                          {draft[field]} <Pencil size={10} />
+                        </button>
+                      )}
+                      <span className="quick-tile-add"><Plus size={14} /> <span>+1</span></span>
                     </div>
+                    {isMonthlyProduct && selectedMonthlyProduct.target > 0 && (
+                      <div className="quick-tile-progress" aria-label={`${Math.round(selectedProductProgress)}% da meta mensal`}><span style={{ width: `${selectedProductProgress}%` }} /></div>
+                    )}
                   </article>
                 );
               })}
             </div>
-
-            <div className="quick-entry-footnote">
-              <span><Activity size={13} /> Um toque em +1 registra uma postagem ou venda.</span>
-              <span>Use o número para corrigir a quantidade.</span>
+            <div className="refined-action-bar">
+              <span className="action-bar-instruction">Toque no cartão para registrar <strong>+1</strong>; clique no número para corrigir.</span>
+              <span className="keyboard-hint"><kbd>1–7</kbd> atalhos</span>
+              {lastAction?.date === selectedDate && (
+                <button className="undo-inline" onClick={undoLastIncrement} title={`Desfazer: ${lastAction.label} · Ctrl+Z`}><Undo2 size={13} /> Desfazer</button>
+              )}
+              <span className="quick-save-state"><ShieldCheck size={14} /> {saving || draftDirty ? 'Salvando…' : 'Salvo automaticamente'}</span>
             </div>
           </>
         )}

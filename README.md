@@ -2,7 +2,7 @@
 
 Painel flutuante e compacto para registrar diariamente os serviços e produtos de um atendente dos Correios e gerar um único relatório consolidado no fechamento do mês. O painel é aberto pelo ícone na área de notificação (perto do relógio), sem manter uma janela comum na barra de tarefas.
 
-## O que está implementado nesta versão 0.5.0
+## O que está implementado nesta versão 0.6.0
 
 - Painel compacto, sem moldura e sempre acima das outras janelas, com ícone na área de notificação do Windows.
 - O painel inicia oculto e aparece ao clicar no ícone perto do relógio. O segundo clique oculta novamente quando ele está em foco.
@@ -10,7 +10,10 @@ Painel flutuante e compacto para registrar diariamente os serviços e produtos d
 - Controles próprios para arrastar, minimizar, maximizar/restaurar, alternar entre o painel completo e o modo micro de aproximadamente 10 × 3 cm, e ocultar o painel. Duplo clique na barra superior do painel completo também alterna maximizar/restaurar.
 - Ocultar/minimizar não encerra o aplicativo; o menu da bandeja oferece a opção **Sair do aplicativo**.
 - Interface horizontal para uso rápido no balcão: painel completo de 1080 × 270 e novo modo micro de aproximadamente 10 × 3 cm (378 × 113 px lógicos). O modo micro alinha os sete lançamentos em uma faixa com um botão grande de +1 em cada indicador; a data também pode ser trocada nesse formato. O modo escolhido fica salvo e é restaurado ao abrir o aplicativo.
-- Cada toque em **+1** contabiliza uma postagem ou venda e salva automaticamente; o valor numérico também pode ser editado para corrigir o total.
+- Tela principal simplificada no estilo Fluent/Windows 11: sete cartões de ação em uma única linha, com menos informação concorrente e cores neutras com azul de destaque do Windows.
+- Um clique em qualquer área livre do cartão registra +1; o número é clicável para editar diretamente a quantidade.
+- Atalhos de teclado `1` a `7` registram PAC, SEDEX, Premium, VD, AR, Embalagem e produto sazonal, respectivamente. `Ctrl+Z` ou o botão **Desfazer** reverte o último toque.
+- Salvamento automático após os lançamentos; status visível na barra inferior.
 - Lançamento diário de PAC, SEDEX, Premium 10 e 12, VD, AR e Embalagem.
 - Produto sazonal configurável por mês: o atendente altera o nome do produto (por exemplo, Chip Correios Celular) e a meta mensal em unidades. A configuração de cada mês fica preservada, sem mudar os meses anteriores.
 - Histórico com reabertura, correção e exclusão de dias.

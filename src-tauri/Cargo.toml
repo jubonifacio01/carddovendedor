@@ -1,6 +1,6 @@
 [package]
 name = "card-do-vendedor"
-version = "0.5.0"
+version = "0.6.0"
 description = "Apontamento diário e fechamento mensal do Card do Vendedor"
 authors = ["OpenAI"]
 edition = "2021"
