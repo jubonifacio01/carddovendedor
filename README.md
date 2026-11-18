@@ -1,19 +1,29 @@
-# Card do Vendedor — Windows
+# Card do Vendedor — Painel rápido para Windows
 
-Aplicativo desktop compacto para registrar diariamente os serviços e produtos de um atendente dos Correios e gerar um único relatório consolidado no fechamento do mês.
+Painel flutuante e compacto para registrar diariamente os serviços e produtos de um atendente dos Correios e gerar um único relatório consolidado no fechamento do mês. O painel é aberto pelo ícone na área de notificação (perto do relógio), sem manter uma janela comum na barra de tarefas.
 
-## O que está implementado nesta primeira versão
+## O que está implementado nesta versão 0.3.0
 
-- Janela compacta, sem moldura, com ícone na bandeja do sistema do Windows.
-- Clique esquerdo no ícone da bandeja para abrir o painel; menu do botão direito com opções para abrir ou sair.
-- Fechar a janela apenas a oculta na bandeja, sem encerrar o aplicativo.
-- Perfil individual por computador: nome do atendente e agência.
-- Lançamento diário de PAC, SEDEX, Premium 10 e 12, VD, AR, Embalagem e Correios Celular.
-- Controles de +1, -1 e edição direta de quantidades.
+- Painel compacto, sem moldura e sempre acima das outras janelas, com ícone na área de notificação do Windows.
+- O painel inicia oculto e aparece ao clicar no ícone perto do relógio. O segundo clique oculta novamente quando ele está em foco.
+- Abertura posicionada no canto inferior direito da área útil da tela, acima da barra de tarefas.
+- Controles próprios para arrastar, minimizar, maximizar/restaurar e ocultar o painel. Duplo clique na barra superior também alterna maximizar/restaurar.
+- Ocultar/minimizar não encerra o aplicativo; o menu da bandeja oferece a opção **Sair do aplicativo**.
+- Interface revisada para uso rápido no balcão: botões maiores, mais contraste e ações de +1 mais evidentes.
+- Cada toque em **+1** contabiliza uma postagem ou venda e salva automaticamente; o valor numérico também pode ser editado para corrigir o total.
+- Lançamento diário de PAC, SEDEX, Premium 10 e 12, VD, AR e Embalagem.
+- Produto sazonal configurável por mês: o atendente altera o nome do produto (por exemplo, Chip Correios Celular) e a meta mensal em unidades. A configuração de cada mês fica preservada, sem mudar os meses anteriores.
 - Histórico com reabertura, correção e exclusão de dias.
-- Resumo mensal e exportação de um arquivo Excel com resumo + detalhe diário.
-- Backup JSON e restauração dos dados.
+- Resumo mensal e exportação de um arquivo Excel com resumo + detalhe diário, usando o nome do produto sazonal definido para aquele mês.
+- Backup JSON e restauração dos dados, incluindo configurações sazonais por mês.
 - Banco SQLite local, sem conta, servidor ou conexão com a internet.
+- Compatibilidade com os registros das versões anteriores: as quantidades antigas de Correios Celular são preservadas como quantidade do produto mensal configurável.
+
+## Sobre o termo “widget” no Windows 11
+
+Esta versão funciona como um **painel flutuante da área de notificação** (ícone próximo ao relógio). Ela não é, ainda, um widget registrado no Painel de Widgets do Windows (`Win + W`). O Painel de Widgets é uma área separada do Windows e exige um provedor de widget nativo/empacotado; isso é uma integração adicional, não apenas uma configuração visual do Tauri.
+
+A janela principal do painel não aparece como um programa comum na barra de tarefas (`skipTaskbar: true`). O acesso rápido é feito pelo ícone na área de notificação.
 
 ## Regras de cálculo preservadas do arquivo enviado
 
@@ -22,9 +32,10 @@ As fórmulas foram lidas diretamente da planilha `CARD DO VENDEDOR EXCEL - EDITA
 - **SEDEX %:** SEDEX ÷ (PAC + SEDEX).
 - **Premium 10 e 12 %:** Premium ÷ (PAC + SEDEX + Premium).
 - **VD %, AR % e Embalagem %:** quantidade do indicador ÷ (PAC + SEDEX + Premium).
-- **Correios Celular:** soma das quantidades lançadas; a meta não entra na soma. A referência corrigida é `=SOMA(C16:G16)` no modelo semanal.
+- **Produto sazonal do mês:** quantidade vendida no dia, com nome e meta em unidades configuráveis para cada mês. O nome padrão é “Correios Celular” para manter compatibilidade com a planilha original, mas pode ser trocado (por exemplo, chip ou outro produto da campanha). A meta fica guardada por referência mensal.
+- **Correios Celular no Excel original:** a fórmula de total correta exclui a coluna B (meta) e soma as colunas C até G: `=SOMA(C16:G16)`. No aplicativo, a meta é armazenada separadamente e não entra no total de vendas.
 
-As metas iniciais vêm da coluna META do modelo: SEDEX 88%, Premium 2,65%, VD 35%, AR 35% e Embalagem 40%. Elas podem ser ajustadas no perfil. PAC não possui meta numérica preenchida no arquivo.
+As metas iniciais vêm da coluna META do modelo: SEDEX 88%, Premium 2,65%, VD 35%, AR 35% e Embalagem 40%. Elas podem ser ajustadas no perfil. PAC não possui meta numérica preenchida no arquivo. A meta do produto sazonal é configurada separadamente por mês, em unidades.
 
 No relatório mensal, as taxas são recalculadas sobre os totais do mês. A tabela diária também mostra as taxas de cada dia.
 
@@ -53,7 +64,7 @@ npm install
 npm run dev
 ```
 
-A prévia do navegador usa `localStorage`; o aplicativo Tauri instalado usa SQLite.
+A prévia do navegador usa `localStorage`; o aplicativo Tauri instalado usa SQLite. Os controles de janela e o ícone de bandeja só funcionam na versão Tauri.
 
 ## Gerar os instaladores usando o GitHub (sem compilar no computador)
 

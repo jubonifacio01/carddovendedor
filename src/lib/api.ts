@@ -1,19 +1,41 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { AppState, DailyEntry, Profile } from '../types';
+import type { AppState, DailyEntry, MonthlyProduct, Profile } from '../types';
 
-const STORAGE_KEY = 'card-do-vendedor-state-v1';
+const STORAGE_KEY = 'card-do-vendedor-state-v2';
+const LEGACY_STORAGE_KEY = 'card-do-vendedor-state-v1';
+
+type LegacyDailyEntry = Partial<DailyEntry> & { date: string; cellular?: number };
+
+function normalizeEntry(entry: LegacyDailyEntry): DailyEntry {
+  return {
+    date: entry.date,
+    pac: Number(entry.pac ?? 0),
+    sedex: Number(entry.sedex ?? 0),
+    premium: Number(entry.premium ?? 0),
+    vd: Number(entry.vd ?? 0),
+    ar: Number(entry.ar ?? 0),
+    packaging: Number(entry.packaging ?? 0),
+    // Mantém os lançamentos de Correios Celular feitos nas versões anteriores.
+    monthlyProductQty: Number(entry.monthlyProductQty ?? entry.cellular ?? 0),
+    updatedAt: entry.updatedAt ?? new Date().toISOString(),
+  };
+}
+
+function normalizeState(parsed: Partial<AppState> & { entries?: LegacyDailyEntry[] }): AppState {
+  return {
+    profile: parsed.profile ?? null,
+    entries: Array.isArray(parsed.entries) ? parsed.entries.map(normalizeEntry) : [],
+    monthlyProducts: Array.isArray(parsed.monthlyProducts) ? parsed.monthlyProducts : [],
+  };
+}
 
 function readBrowserState(): AppState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { profile: null, entries: [] };
-    const parsed = JSON.parse(raw) as AppState;
-    return {
-      profile: parsed.profile ?? null,
-      entries: Array.isArray(parsed.entries) ? parsed.entries : [],
-    };
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) return { profile: null, entries: [], monthlyProducts: [] };
+    return normalizeState(JSON.parse(raw));
   } catch {
-    return { profile: null, entries: [] };
+    return { profile: null, entries: [], monthlyProducts: [] };
   }
 }
 
@@ -22,7 +44,10 @@ function writeBrowserState(state: AppState) {
 }
 
 export async function loadState(): Promise<AppState> {
-  if (isTauri()) return invoke<AppState>('load_state');
+  if (isTauri()) {
+    const state = await invoke<AppState>('load_state');
+    return normalizeState(state as AppState & { entries: LegacyDailyEntry[] });
+  }
   return readBrowserState();
 }
 
@@ -47,6 +72,17 @@ export async function saveEntry(entry: DailyEntry): Promise<void> {
   writeBrowserState({ ...state, entries });
 }
 
+export async function saveMonthlyProduct(product: MonthlyProduct): Promise<void> {
+  if (isTauri()) {
+    await invoke('save_monthly_product', { product });
+    return;
+  }
+  const state = readBrowserState();
+  const monthlyProducts = state.monthlyProducts.filter((item) => item.month !== product.month);
+  monthlyProducts.push(product);
+  writeBrowserState({ ...state, monthlyProducts });
+}
+
 export async function deleteEntry(date: string): Promise<void> {
   if (isTauri()) {
     await invoke('delete_entry', { date });
@@ -58,7 +94,11 @@ export async function deleteEntry(date: string): Promise<void> {
 
 export async function replaceState(state: AppState): Promise<void> {
   if (isTauri()) {
-    await invoke('replace_state', { profile: state.profile, entries: state.entries });
+    await invoke('replace_state', {
+      profile: state.profile,
+      entries: state.entries,
+      monthlyProducts: state.monthlyProducts,
+    });
     return;
   }
   writeBrowserState(state);

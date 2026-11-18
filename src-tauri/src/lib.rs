@@ -4,7 +4,7 @@ use std::{fs, path::PathBuf};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, WebviewWindow, WindowEvent,
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +35,17 @@ pub struct DailyEntry {
     pub vd: i64,
     pub ar: i64,
     pub packaging: i64,
-    pub cellular: i64,
+    #[serde(alias = "cellular")]
+    pub monthly_product_qty: i64,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthlyProduct {
+    pub month: String,
+    pub name: String,
+    pub target: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +53,8 @@ pub struct DailyEntry {
 pub struct AppState {
     pub profile: Option<Profile>,
     pub entries: Vec<DailyEntry>,
+    #[serde(default)]
+    pub monthly_products: Vec<MonthlyProduct>,
 }
 
 fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -72,6 +83,11 @@ fn open_db(app: &AppHandle) -> Result<Connection, String> {
            packaging INTEGER NOT NULL DEFAULT 0,
            cellular INTEGER NOT NULL DEFAULT 0,
            updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS monthly_products (
+           month TEXT PRIMARY KEY NOT NULL,
+           name TEXT NOT NULL,
+           target INTEGER NOT NULL DEFAULT 0
          );",
     )
     .map_err(|e| e.to_string())?;
@@ -82,7 +98,7 @@ fn validate_entry(entry: &DailyEntry) -> Result<(), String> {
     if entry.date.len() != 10 || entry.date.chars().nth(4) != Some('-') || entry.date.chars().nth(7) != Some('-') {
         return Err("Data inválida. Use o formato AAAA-MM-DD.".into());
     }
-    let values = [entry.pac, entry.sedex, entry.premium, entry.vd, entry.ar, entry.packaging, entry.cellular];
+    let values = [entry.pac, entry.sedex, entry.premium, entry.vd, entry.ar, entry.packaging, entry.monthly_product_qty];
     if values.iter().any(|value| *value < 0) {
         return Err("As quantidades não podem ser negativas.".into());
     }
@@ -113,7 +129,7 @@ fn load_state(app: AppHandle) -> Result<AppState, String> {
                 vd: row.get(4)?,
                 ar: row.get(5)?,
                 packaging: row.get(6)?,
-                cellular: row.get(7)?,
+                monthly_product_qty: row.get(7)?,
                 updated_at: row.get(8)?,
             })
         })
@@ -122,7 +138,21 @@ fn load_state(app: AppHandle) -> Result<AppState, String> {
     for row in rows {
         entries.push(row.map_err(|e| e.to_string())?);
     }
-    Ok(AppState { profile, entries })
+    let mut product_statement = conn
+        .prepare("SELECT month, name, target FROM monthly_products ORDER BY month DESC")
+        .map_err(|e| e.to_string())?;
+    let product_rows = product_statement
+        .query_map([], |row| Ok(MonthlyProduct {
+            month: row.get(0)?,
+            name: row.get(1)?,
+            target: row.get(2)?,
+        }))
+        .map_err(|e| e.to_string())?;
+    let mut monthly_products = Vec::new();
+    for row in product_rows {
+        monthly_products.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(AppState { profile, entries, monthly_products })
 }
 
 #[tauri::command]
@@ -152,7 +182,7 @@ fn save_entry(app: AppHandle, entry: DailyEntry) -> Result<(), String> {
            pac=excluded.pac, sedex=excluded.sedex, premium=excluded.premium,
            vd=excluded.vd, ar=excluded.ar, packaging=excluded.packaging,
            cellular=excluded.cellular, updated_at=excluded.updated_at",
-        params![entry.date, entry.pac, entry.sedex, entry.premium, entry.vd, entry.ar, entry.packaging, entry.cellular, entry.updated_at],
+        params![entry.date, entry.pac, entry.sedex, entry.premium, entry.vd, entry.ar, entry.packaging, entry.monthly_product_qty, entry.updated_at],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -167,7 +197,32 @@ fn delete_entry(app: AppHandle, date: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn replace_state(app: AppHandle, profile: Option<Profile>, entries: Vec<DailyEntry>) -> Result<(), String> {
+fn save_monthly_product(app: AppHandle, product: MonthlyProduct) -> Result<(), String> {
+    if product.month.len() != 7 || product.month.chars().nth(4) != Some('-') {
+        return Err("Mês inválido. Use o formato AAAA-MM.".into());
+    }
+    if product.name.trim().is_empty() {
+        return Err("Informe o nome do produto sazonal.".into());
+    }
+    if product.target < 0 {
+        return Err("A meta não pode ser negativa.".into());
+    }
+    let conn = open_db(&app)?;
+    conn.execute(
+        "INSERT INTO monthly_products (month, name, target) VALUES (?1, ?2, ?3)
+         ON CONFLICT(month) DO UPDATE SET name = excluded.name, target = excluded.target",
+        params![product.month, product.name.trim(), product.target],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn replace_state(
+    app: AppHandle,
+    profile: Option<Profile>,
+    entries: Vec<DailyEntry>,
+    monthly_products: Vec<MonthlyProduct>,
+) -> Result<(), String> {
     for entry in &entries {
         validate_entry(entry)?;
     }
@@ -175,6 +230,7 @@ fn replace_state(app: AppHandle, profile: Option<Profile>, entries: Vec<DailyEnt
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM entries", []).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM profile", []).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM monthly_products", []).map_err(|e| e.to_string())?;
     if let Some(profile) = profile {
         let payload = serde_json::to_string(&profile).map_err(|e| e.to_string())?;
         tx.execute("INSERT INTO profile (id, payload) VALUES (1, ?1)", params![payload])
@@ -184,9 +240,18 @@ fn replace_state(app: AppHandle, profile: Option<Profile>, entries: Vec<DailyEnt
         tx.execute(
             "INSERT INTO entries (date, pac, sedex, premium, vd, ar, packaging, cellular, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![entry.date, entry.pac, entry.sedex, entry.premium, entry.vd, entry.ar, entry.packaging, entry.cellular, entry.updated_at],
+            params![entry.date, entry.pac, entry.sedex, entry.premium, entry.vd, entry.ar, entry.packaging, entry.monthly_product_qty, entry.updated_at],
         )
         .map_err(|e| e.to_string())?;
+    }
+    for product in monthly_products {
+        if product.month.len() != 7 || product.month.chars().nth(4) != Some('-') || product.name.trim().is_empty() || product.target < 0 {
+            return Err("Há uma configuração de produto mensal inválida no backup.".into());
+        }
+        tx.execute(
+            "INSERT INTO monthly_products (month, name, target) VALUES (?1, ?2, ?3)",
+            params![product.month, product.name.trim(), product.target],
+        ).map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -206,10 +271,44 @@ fn save_export_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
     fs::write(destination, bytes).map_err(|e| e.to_string())
 }
 
+fn position_panel_near_taskbar(window: &WebviewWindow) {
+    // Posiciona o painel sobre a área de trabalho, acima da barra de tarefas.
+    // Usa o monitor principal como fallback quando a janela ainda está oculta.
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+
+    if let Some(monitor) = monitor {
+        let work_area = monitor.work_area();
+        let size = window.outer_size().unwrap_or(PhysicalSize::new(445, 700));
+        let margin = 12_i32;
+        let work_x = work_area.position.x;
+        let work_y = work_area.position.y;
+        let work_width = work_area.size.width as i32;
+        let work_height = work_area.size.height as i32;
+        let x = (work_x + work_width - size.width as i32 - margin).max(work_x + margin);
+        let y = (work_y + work_height - size.height as i32 - margin).max(work_y + margin);
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
+}
+
 fn show_main_window(window: &WebviewWindow) {
     let _ = window.unminimize();
+    position_panel_near_taskbar(window);
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+fn toggle_main_window(window: &WebviewWindow) {
+    let visible = window.is_visible().unwrap_or(false);
+    let minimized = window.is_minimized().unwrap_or(false);
+    if visible && !minimized {
+        let _ = window.hide();
+    } else {
+        show_main_window(window);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -218,8 +317,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let open_item = MenuItem::with_id(app, "open", "Abrir Card do Vendedor", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+            let hide_item = MenuItem::with_id(app, "hide", "Minimizar painel", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Sair do aplicativo", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open_item, &hide_item, &quit_item])?;
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().expect("ícone padrão ausente").clone())
@@ -230,6 +330,11 @@ pub fn run() {
                     "open" => {
                         if let Some(window) = app.get_webview_window("main") {
                             show_main_window(&window);
+                        }
+                    }
+                    "hide" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.hide();
                         }
                     }
                     "quit" => app.exit(0),
@@ -243,7 +348,7 @@ pub fn run() {
                     } = event
                     {
                         if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            show_main_window(&window);
+                            toggle_main_window(&window);
                         }
                     }
                 })
@@ -256,7 +361,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![load_state, save_profile, save_entry, delete_entry, replace_state, save_export_file])
+        .invoke_handler(tauri::generate_handler![load_state, save_profile, save_entry, save_monthly_product, delete_entry, replace_state, save_export_file])
         .run(tauri::generate_context!())
         .expect("erro ao executar Card do Vendedor");
 }

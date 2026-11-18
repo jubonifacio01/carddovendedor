@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { save as showSaveDialog } from '@tauri-apps/plugin-dialog';
-import type { DailyEntry, Profile } from '../types';
+import type { AppState, DailyEntry, MonthlyProduct, Profile } from '../types';
 import { calculateRates, sumEntries } from './calculations';
 
 const ptDate = (iso: string) => {
@@ -33,7 +33,7 @@ async function saveFile(bytes: Uint8Array, fileName: string, extension: 'xlsx' |
   return true;
 }
 
-export async function exportMonthlyReport(profile: Profile, allEntries: DailyEntry[], month: string) {
+export async function exportMonthlyReport(profile: Profile, allEntries: DailyEntry[], month: string, monthlyProduct: MonthlyProduct) {
   const entries = allEntries
     .filter((entry) => entry.date.startsWith(month))
     .slice()
@@ -50,7 +50,7 @@ export async function exportMonthlyReport(profile: Profile, allEntries: DailyEnt
     ['VD', totals.vd, monthlyRates.vd, profile.targets.vd],
     ['AR', totals.ar, monthlyRates.ar, profile.targets.ar],
     ['EMBALAGEM', totals.packaging, monthlyRates.packaging, profile.targets.packaging],
-    ['CORREIOS CELULAR', totals.cellular, null, null],
+    [monthlyProduct.name.toLocaleUpperCase('pt-BR'), totals.monthlyProductQty, null, monthlyProduct.target],
   ] as const;
 
   const workbook = new ExcelJS.Workbook();
@@ -79,7 +79,7 @@ export async function exportMonthlyReport(profile: Profile, allEntries: DailyEnt
     { header: 'AR %', key: 'arRate', width: 11 },
     { header: 'Embalagem', key: 'packaging', width: 14 },
     { header: 'Embalagem %', key: 'packagingRate', width: 15 },
-    { header: 'Correios Celular', key: 'cellular', width: 18 },
+    { header: monthlyProduct.name, key: 'monthlyProductQty', width: Math.max(18, monthlyProduct.name.length + 3) },
   ];
 
   sheet.mergeCells('A1:N1');
@@ -109,8 +109,8 @@ export async function exportMonthlyReport(profile: Profile, allEntries: DailyEnt
   sheet.getCell('B5').value = entries.length;
   sheet.getCell('C5').value = 'Encomendas (PAC + SEDEX)';
   sheet.getCell('D5').value = encomendas;
-  sheet.getCell('E5').value = 'Correios Celular';
-  sheet.getCell('F5').value = totals.cellular;
+  sheet.getCell('E5').value = monthlyProduct.name;
+  sheet.getCell('F5').value = totals.monthlyProductQty;
   sheet.getCell('G5').value = 'PAC';
   sheet.getCell('H5').value = totals.pac;
   sheet.getCell('I5').value = 'SEDEX';
@@ -127,22 +127,24 @@ export async function exportMonthlyReport(profile: Profile, allEntries: DailyEnt
     cell.font = { name: 'Aptos', size: 9, bold: col % 2 === 0, color: { argb: 'FF233547' } };
   }
 
-  sheet.getRow(7).values = ['Indicador', 'Quantidade no mês', 'Percentual mensal', 'Meta do modelo', 'Situação', 'Observação'];
+  sheet.getRow(7).values = ['Indicador', 'Quantidade no mês', 'Percentual mensal', 'Meta', 'Situação', 'Observação'];
   sheet.getRow(7).height = 25;
   const summaryRows = metrics.map(([label, quantity, actual, target]) => {
-    const status = actual === null || target === null
+    const status = target === null
       ? 'Quantidade'
-      : actual >= target ? 'Meta atingida' : 'Abaixo da meta';
+      : actual === null
+        ? (target === 0 ? 'Meta não definida' : quantity >= target ? 'Meta atingida' : 'Abaixo da meta')
+        : actual >= target ? 'Meta atingida' : 'Abaixo da meta';
     const observation = label === 'SEDEX'
       ? 'Base: PAC + SEDEX'
-      : actual === null ? 'Indicador de quantidade' : 'Base: PAC + SEDEX + Premium';
+      : actual === null ? 'Meta em unidades' : 'Base: PAC + SEDEX + Premium';
     return [label, quantity, actual === null ? '—' : actual, target === null ? '—' : target, status, observation];
   });
   summaryRows.forEach((row, index) => {
     const excelRow = 8 + index;
     sheet.getRow(excelRow).values = row;
     sheet.getCell(`C${excelRow}`).numFmt = '0.00%';
-    sheet.getCell(`D${excelRow}`).numFmt = '0.00%';
+    sheet.getCell(`D${excelRow}`).numFmt = index === metrics.length - 1 ? '0' : '0.00%';
     for (let col = 1; col <= 6; col += 1) {
       const cell = sheet.getRow(excelRow).getCell(col);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: index % 2 === 0 ? 'FFFFFFFF' : 'FFF7F9FB' } };
@@ -193,7 +195,7 @@ export async function exportMonthlyReport(profile: Profile, allEntries: DailyEnt
       rates.ar,
       entry.packaging,
       rates.packaging,
-      entry.cellular,
+      entry.monthlyProductQty,
     ];
     sheet.getCell(`A${rowNumber}`).numFmt = 'dd/mm/yyyy';
     ['E', 'G', 'I', 'K', 'M'].forEach((col) => { sheet.getCell(`${col}${rowNumber}`).numFmt = '0.00%'; });
@@ -217,7 +219,7 @@ export async function exportMonthlyReport(profile: Profile, allEntries: DailyEnt
   sheet.getCell(`K${totalsRow}`).value = monthlyRates.ar;
   sheet.getCell(`L${totalsRow}`).value = totals.packaging;
   sheet.getCell(`M${totalsRow}`).value = monthlyRates.packaging;
-  sheet.getCell(`N${totalsRow}`).value = totals.cellular;
+  sheet.getCell(`N${totalsRow}`).value = totals.monthlyProductQty;
   sheet.getCell(`A${totalsRow}`).font = { bold: true };
   sheet.getRow(totalsRow).eachCell((cell) => {
     cell.font = { bold: true, color: { argb: 'FF173B57' } };
@@ -240,10 +242,10 @@ export async function exportMonthlyReport(profile: Profile, allEntries: DailyEnt
   );
 }
 
-export async function exportBackup(state: { profile: Profile | null; entries: DailyEntry[] }) {
+export async function exportBackup(state: AppState) {
   const backup = {
     app: 'Card do Vendedor',
-    backupVersion: 1,
+    backupVersion: 2,
     createdAt: new Date().toISOString(),
     ...state,
   };

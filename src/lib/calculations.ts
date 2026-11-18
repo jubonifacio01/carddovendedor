@@ -1,6 +1,6 @@
 import type { DailyEntry } from '../types';
 
-export type MonthlyTotals = Pick<DailyEntry, 'pac' | 'sedex' | 'premium' | 'vd' | 'ar' | 'packaging' | 'cellular'>;
+export type MonthlyTotals = Pick<DailyEntry, 'pac' | 'sedex' | 'premium' | 'vd' | 'ar' | 'packaging' | 'monthlyProductQty'>;
 export type IndicatorRates = Pick<MonthlyTotals, 'sedex' | 'premium' | 'vd' | 'ar' | 'packaging'>;
 
 const ratio = (quantity: number, base: number) => base > 0 ? quantity / base : 0;
@@ -13,8 +13,8 @@ export function sumEntries(entries: DailyEntry[]): MonthlyTotals {
     vd: total.vd + entry.vd,
     ar: total.ar + entry.ar,
     packaging: total.packaging + entry.packaging,
-    cellular: total.cellular + entry.cellular,
-  }), { pac: 0, sedex: 0, premium: 0, vd: 0, ar: 0, packaging: 0, cellular: 0 });
+    monthlyProductQty: total.monthlyProductQty + entry.monthlyProductQty,
+  }), { pac: 0, sedex: 0, premium: 0, vd: 0, ar: 0, packaging: 0, monthlyProductQty: 0 });
 }
 
 export function calculateRates(values: Pick<DailyEntry, 'pac' | 'sedex' | 'premium' | 'vd' | 'ar' | 'packaging'>): IndicatorRates {
