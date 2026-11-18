@@ -2,28 +2,34 @@
 
 Painel flutuante e compacto para registrar diariamente os serviços e produtos de um atendente dos Correios e gerar um único relatório consolidado no fechamento do mês. O painel é aberto pelo ícone na área de notificação (perto do relógio), sem manter uma janela comum na barra de tarefas.
 
-## O que está implementado nesta versão 0.3.0
+## O que está implementado nesta versão 0.5.0
 
 - Painel compacto, sem moldura e sempre acima das outras janelas, com ícone na área de notificação do Windows.
 - O painel inicia oculto e aparece ao clicar no ícone perto do relógio. O segundo clique oculta novamente quando ele está em foco.
 - Abertura posicionada no canto inferior direito da área útil da tela, acima da barra de tarefas.
-- Controles próprios para arrastar, minimizar, maximizar/restaurar e ocultar o painel. Duplo clique na barra superior também alterna maximizar/restaurar.
+- Controles próprios para arrastar, minimizar, maximizar/restaurar, alternar entre o painel completo e o modo micro de aproximadamente 10 × 3 cm, e ocultar o painel. Duplo clique na barra superior do painel completo também alterna maximizar/restaurar.
 - Ocultar/minimizar não encerra o aplicativo; o menu da bandeja oferece a opção **Sair do aplicativo**.
-- Interface revisada para uso rápido no balcão: botões maiores, mais contraste e ações de +1 mais evidentes.
+- Interface horizontal para uso rápido no balcão: painel completo de 1080 × 270 e novo modo micro de aproximadamente 10 × 3 cm (378 × 113 px lógicos). O modo micro alinha os sete lançamentos em uma faixa com um botão grande de +1 em cada indicador; a data também pode ser trocada nesse formato. O modo escolhido fica salvo e é restaurado ao abrir o aplicativo.
 - Cada toque em **+1** contabiliza uma postagem ou venda e salva automaticamente; o valor numérico também pode ser editado para corrigir o total.
 - Lançamento diário de PAC, SEDEX, Premium 10 e 12, VD, AR e Embalagem.
 - Produto sazonal configurável por mês: o atendente altera o nome do produto (por exemplo, Chip Correios Celular) e a meta mensal em unidades. A configuração de cada mês fica preservada, sem mudar os meses anteriores.
 - Histórico com reabertura, correção e exclusão de dias.
 - Resumo mensal e exportação de um arquivo Excel com resumo + detalhe diário, usando o nome do produto sazonal definido para aquele mês.
-- Backup JSON e restauração dos dados, incluindo configurações sazonais por mês.
+- Backup JSON e restauração dos dados, incluindo configurações sazonais por mês. A restauração abre o seletor nativo do Windows, valida o conteúdo, aceita o campo antigo `cellular` e substitui os registros em uma única transação SQLite para evitar restaurações pela metade.
 - Banco SQLite local, sem conta, servidor ou conexão com a internet.
 - Compatibilidade com os registros das versões anteriores: as quantidades antigas de Correios Celular são preservadas como quantidade do produto mensal configurável.
+
+## Modo micro de 10 × 3 cm
+
+No cabeçalho do painel completo, o botão com ícone de redução alterna para o modo micro. Ele mostra os sete indicadores em uma única faixa horizontal, com contador e um botão +1 grande para cada indicador; para corrigir quantidades, basta voltar ao painel completo; clicar no nome abre a configuração do produto sazonal, e o botão de expandir retorna ao painel completo. A data do lançamento pode ser alterada no próprio modo micro. Configurações de perfil e produto abrem automaticamente o painel completo para não comprimir formulários.
+
+O tamanho de 378 × 113 é definido em pixels lógicos do Tauri, uma aproximação de 10 × 3 cm em escala de 96 DPI. A dimensão física percebida pode variar conforme a escala do Windows e o monitor utilizado.
 
 ## Sobre o termo “widget” no Windows 11
 
 Esta versão funciona como um **painel flutuante da área de notificação** (ícone próximo ao relógio). Ela não é, ainda, um widget registrado no Painel de Widgets do Windows (`Win + W`). O Painel de Widgets é uma área separada do Windows e exige um provedor de widget nativo/empacotado; isso é uma integração adicional, não apenas uma configuração visual do Tauri.
 
-A janela principal do painel não aparece como um programa comum na barra de tarefas (`skipTaskbar: true`). O acesso rápido é feito pelo ícone na área de notificação.
+A janela principal do painel abre em orientação horizontal (1080 × 270, com largura mínima de 1000 px) e não aparece como um programa comum na barra de tarefas (`skipTaskbar: true`). O acesso rápido é feito pelo ícone na área de notificação.
 
 ## Regras de cálculo preservadas do arquivo enviado
 
@@ -100,6 +106,6 @@ A geração do instalador precisa ser feita em um ambiente Windows com os pré-r
 
 ## Armazenamento e segurança dos dados
 
-O banco `card-vendedor.sqlite3` é criado na pasta de dados do aplicativo do usuário do Windows (`app_data_dir` do Tauri). Cada instalação mantém seus próprios registros. Use **Exportar backup dos dados** antes de trocar de computador ou formatar o Windows e **Restaurar backup** no novo ambiente.
+O banco `card-vendedor.sqlite3` é criado na pasta de dados do aplicativo do usuário do Windows (`app_data_dir` do Tauri). Cada instalação mantém seus próprios registros. Use **Exportar backup dos dados** antes de trocar de computador ou formatar o Windows e **Restaurar backup** no novo ambiente. A restauração agora seleciona o arquivo por uma janela nativa do Windows, verifica a estrutura e as quantidades e só então grava o conteúdo. O banco é atualizado por transação: se algum registro falhar, a restauração inteira é revertida.
 
 O aplicativo não envia os dados para terceiros. O relatório Excel e o backup abrem a janela nativa **Salvar como**, para o atendente escolher a pasta e o nome do arquivo.

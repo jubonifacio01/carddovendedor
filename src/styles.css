@@ -272,3 +272,156 @@ h1 { font-size: 25px; }
 .report-campaign-edit { width: 100%; margin: 9px 0 12px; justify-content: center; }
 .campaign-progress { height: 6px; margin-top: 2px; border-radius: 999px; overflow: hidden; background: #d6e2e9; }
 .campaign-progress span { display: block; height: 100%; border-radius: inherit; background: #1d789e; transition: width .2s ease; }
+
+/* Card 0.4.x — painel horizontal para lançamentos rápidos no balcão */
+:root {
+  --navy: #123b56;
+  --navy-strong: #0d2f46;
+  --blue: #12648d;
+  --muted: #41596b;
+  --line: #cbd8e1;
+}
+html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+body { min-width: 1000px; }
+.app-shell { border-radius: 13px; }
+.window-header { height: 46px; min-height: 46px; padding: 0 10px 0 12px; gap: 9px; }
+.brand-mark { width: 32px; height: 32px; border-radius: 9px; }
+.brand-title strong { font-size: 14px; }
+.brand-title span { font-size: 10px; }
+.window-control { width: 31px; height: 30px; }
+.profile-strip { min-height: 42px; padding: 4px 13px; gap: 9px; }
+.avatar { width: 30px; height: 30px; font-size: 13px; }
+.profile-info { gap: 1px; }
+.profile-info strong { font-size: 12px; }
+.profile-info span { font-size: 10px; }
+.local-status { padding: 4px 8px; font-size: 10px; }
+.tabs { height: 36px; min-height: 36px; padding: 2px 11px 0; gap: 2px; }
+.tab { padding: 0 12px 6px; gap: 6px; font-size: 12px; }
+.content-area { padding: 8px 12px 7px; overflow-x: hidden; overflow-y: auto; }
+.quick-entry-heading { min-height: 30px; align-items: center; margin: 0 0 7px; gap: 10px; }
+.quick-heading-copy { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.quick-heading-copy .eyebrow { margin: 0; font-size: 9px; letter-spacing: .7px; }
+.quick-heading-copy h1 { font-size: 16px; letter-spacing: -.2px; white-space: nowrap; }
+.quick-entry-heading .date-control { min-height: 29px; margin-left: auto; padding: 2px 6px; gap: 5px; border-radius: 8px; }
+.quick-entry-heading .date-control svg { width: 14px; height: 14px; }
+.quick-entry-heading .date-control input { width: 108px; font-size: 11px; }
+.quick-entry-heading .today-button { min-height: 24px; padding: 0 7px; font-size: 10px; }
+.quick-save-state { display: flex; align-items: center; gap: 4px; color: #24633f; font-size: 10px; font-weight: 650; white-space: nowrap; }
+.quick-save-state svg { color: #27804d; }
+.quick-service-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; min-width: 0; }
+.quick-service-grid .service-card {
+  min-width: 0; min-height: 104px; padding: 8px 8px 7px; border: 1px solid #cbd8e1;
+  border-radius: 10px; display: flex; flex-direction: column; justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(18, 48, 67, .045); background: #fff;
+}
+.quick-service-grid .service-card:hover { border-color: #8eafc2; box-shadow: 0 2px 7px rgba(18, 68, 96, .09); }
+.quick-service-grid .service-title-row { min-height: 34px; gap: 6px; align-items: center; }
+.quick-service-grid .service-symbol { width: 25px; height: 25px; border-radius: 7px; }
+.quick-service-grid .service-symbol svg { width: 14px; height: 14px; }
+.quick-service-grid .service-title { min-width: 0; gap: 3px; }
+.quick-service-grid .service-title strong { display: block; min-width: 0; color: #17364b; font-size: 12px; line-height: 1.12; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-service-grid .service-title span { display: block; min-width: 0; color: #4c6272; font-size: 9px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-service-grid .counter-row { height: 34px; margin-top: 7px; gap: 5px; }
+.quick-service-grid .counter-button { width: 28px; height: 31px; min-width: 28px; border-radius: 7px; }
+.quick-service-grid .counter-button svg { width: 14px; height: 14px; }
+.quick-service-grid .counter-button.plus { width: 39px; min-width: 39px; height: 31px; display: flex; justify-content: center; gap: 1px; background: #145a7d; border-color: #145a7d; color: #fff; }
+.quick-service-grid .counter-button.plus span { font-size: 11px; font-weight: 800; }
+.quick-service-grid .count-input { flex: 1; min-width: 0; width: 38px; height: 31px; border-radius: 7px; font-size: 20px; }
+.quick-service-grid .cellular-card { grid-column: auto; min-height: 104px; background: #f5f9fc; border-color: #9bb9ca; }
+.quick-service-grid .campaign-service-card .service-title-row { gap: 5px; }
+.campaign-edit-mini { width: 24px; height: 24px; min-width: 24px; display: grid; place-items: center; border: 1px solid #c2d2dc; border-radius: 6px; color: #1c5878; background: #fff; }
+.campaign-edit-mini:hover { background: #e7f1f6; border-color: #90b2c5; }
+.quick-service-grid .campaign-progress { height: 4px; margin-top: 4px; }
+.quick-entry-footnote { min-height: 18px; margin-top: 5px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #536979; font-size: 10px; line-height: 1.1; }
+.quick-entry-footnote span { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.quick-entry-footnote svg { color: #286b8c; }
+.app-footer { min-height: 27px; height: 27px; padding: 0 12px; font-size: 10px; }
+.app-footer button { padding: 4px 0; font-size: 10px; }
+.toast { left: 12px; right: 12px; bottom: 34px; padding: 9px 11px; font-size: 11px; }
+
+/* Outras abas continuam roláveis, sem reduzir a densidade do painel principal. */
+.section-heading:not(.quick-entry-heading) { margin-bottom: 10px; }
+.section-heading:not(.quick-entry-heading) h1 { font-size: 21px; }
+.report-note { font-size: 11px; }
+
+@media (max-width: 1080px) {
+  body { min-width: 1000px; }
+  .quick-service-grid { gap: 5px; }
+  .quick-service-grid .service-card { padding-left: 6px; padding-right: 6px; }
+  .quick-service-grid .service-title strong { font-size: 11px; }
+  .quick-service-grid .counter-button { width: 25px; min-width: 25px; }
+  .quick-service-grid .counter-button.plus { width: 35px; min-width: 35px; }
+}
+
+/* Cabeçalho único: identificação, navegação e controles ficam na mesma faixa. */
+.window-header { height: 50px; min-height: 50px; padding: 0 9px 0 11px; gap: 8px; }
+.brand-title { flex: 0 0 154px; }
+.header-profile { min-width: 0; flex: 1 1 220px; max-width: 270px; display: flex; align-items: center; gap: 7px; }
+.header-profile .avatar { width: 27px; height: 27px; min-width: 27px; font-size: 12px; }
+.header-profile .profile-info { min-width: 0; flex: 1; gap: 1px; }
+.header-profile .profile-info strong { font-size: 11px; }
+.header-profile .profile-info span { font-size: 9px; }
+.header-profile .local-status { padding: 3px 6px; gap: 4px; font-size: 9px; }
+.header-profile .status-dot { width: 6px; height: 6px; }
+.top-tabs { flex: 0 0 auto; width: auto; height: 35px; min-height: 35px; padding: 0; gap: 1px; border: 0; background: transparent; }
+.top-tabs .tab { height: 34px; padding: 0 8px; gap: 4px; border-bottom-width: 2px; font-size: 10px; white-space: nowrap; }
+.header-actions { flex: 0 0 auto; gap: 1px; }
+.window-control { width: 28px; height: 28px; }
+.profile-strip, .app-shell > nav.tabs:not(.top-tabs) { display: none; }
+.quick-service-grid .service-card { min-height: 96px; }
+.quick-entry-footnote { font-size: 9px; }
+.header-actions { margin-left: auto; }
+.quick-service-grid .campaign-service-card .service-symbol { display: none; }
+.quick-service-grid .campaign-service-card .service-title strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.top-tabs { margin-left: auto; }
+.header-actions { margin-left: 0; }
+
+
+/* Modo micro: faixa de aproximadamente 10 × 3 cm (378 × 113 px lógicos). */
+body.compact-window { min-width: 0 !important; width: 100%; overflow: hidden; }
+body.compact-window #root { min-width: 0; width: 100%; height: 100%; overflow: hidden; }
+.app-shell.compact-mode {
+  width: 100%; height: 100%; min-width: 0; min-height: 0; border-radius: 9px;
+  border: 1px solid #cbd8e1; box-shadow: 0 5px 18px rgba(17, 43, 60, .20);
+}
+.compact-header {
+  height: 26px; min-height: 26px; padding: 0 5px 0 7px; display: flex; align-items: center;
+  gap: 5px; border-bottom: 1px solid #dce5ea; background: #fff; user-select: none;
+}
+.compact-brand { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 4px; color: #173f5b; white-space: nowrap; }
+.compact-brand svg { flex: 0 0 auto; }
+.compact-brand strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 9.5px; line-height: 1; font-weight: 800; }
+.compact-save-dot { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: #26945a; box-shadow: 0 0 0 2px #e7f5ed; }
+.compact-save-dot.is-saving { background: #d18a22; box-shadow: 0 0 0 2px #fbf1df; }
+.compact-date { width: 99px; height: 20px; min-width: 99px; display: flex; align-items: center; justify-content: center; gap: 3px; padding: 0 3px; border: 1px solid #d8e2e8; border-radius: 5px; color: #305a73; background: #f6f9fb; }
+.compact-date svg { flex: 0 0 auto; }
+.compact-date input { width: 80px; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: #173f5b; font-size: 9px; font-weight: 700; }
+.compact-window-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 1px; }
+.compact-window-button { width: 21px; height: 21px; min-width: 21px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; color: #36566b; background: transparent; }
+.compact-window-button:hover { color: #123d59; background: #eaf1f5; }
+.compact-window-button.compact-hide:hover { color: #b42318; background: #ffeded; }
+.compact-content { min-height: 0; flex: 1 1 auto; padding: 3px 4px 4px; overflow: hidden; }
+.compact-service-grid { width: 100%; height: 100%; min-width: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.compact-service {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: stretch;
+  justify-content: center; gap: 5px; padding: 4px 2px 3px; border: 1px solid #d6e0e7;
+  border-radius: 6px; background: #fff; box-shadow: 0 1px 2px rgba(18, 48, 67, .06);
+}
+.compact-service.compact-campaign { border-color: #91b5c8; background: #f2f8fb; }
+.compact-service-label { display: block; width: 100%; min-width: 0; padding: 0; border: 0; color: #27485d; background: transparent; text-align: center; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; font-size: 9.5px; line-height: 1.15; font-weight: 850; letter-spacing: -.15px; }
+.compact-product-label { cursor: pointer; color: #145b7e; }
+.compact-product-label:hover { text-decoration: underline; }
+.compact-count-line { width: 100%; min-width: 0; height: 19px; display: flex; align-items: center; justify-content: center; }
+.compact-count { display: block; max-width: 100%; overflow: hidden; color: #102f46; text-align: center; text-overflow: clip; font-size: 15px; line-height: 1; font-weight: 850; font-variant-numeric: tabular-nums; }
+.compact-increment { width: 100%; height: 23px; min-height: 23px; display: grid; place-items: center; padding: 0; border: 1px solid #145a7d; border-radius: 4px; color: #fff; background: #145a7d; font-size: 10.5px; line-height: 1; font-weight: 850; }
+.compact-increment:hover { background: #0f4968; }
+.compact-mode .toast { left: 5px; right: 5px; bottom: 27px; padding: 5px 7px; font-size: 9px; }
+.compact-mode .modal-backdrop { padding: 8px; }
+
+@media (max-width: 390px) {
+  .compact-header { gap: 3px; padding-left: 5px; padding-right: 4px; }
+  .compact-date { width: 93px; min-width: 93px; }
+  .compact-date input { width: 74px; }
+  .compact-service-grid { gap: 2px; }
+  .compact-service { padding-left: 1px; padding-right: 1px; }
+}

@@ -94,11 +94,7 @@ export async function deleteEntry(date: string): Promise<void> {
 
 export async function replaceState(state: AppState): Promise<void> {
   if (isTauri()) {
-    await invoke('replace_state', {
-      profile: state.profile,
-      entries: state.entries,
-      monthlyProducts: state.monthlyProducts,
-    });
+    await invoke('replace_state', { state });
     return;
   }
   writeBrowserState(state);

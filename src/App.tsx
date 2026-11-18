@@ -6,7 +6,8 @@ import {
   Trash2, Truck, X,
 } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { isTauri } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { open as showOpenDialog } from '@tauri-apps/plugin-dialog';
 import { deleteEntry, loadState, replaceState, saveEntry, saveMonthlyProduct, saveProfile } from './lib/api';
 import { exportBackup, exportMonthlyReport } from './lib/excel';
 import { calculateRates, sumEntries } from './lib/calculations';
@@ -47,8 +48,15 @@ function App() {
   const [systemDate, setSystemDate] = useState(todayISO());
   const lastTodayRef = useRef(todayISO());
   const draftRevisionRef = useRef(0);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const activeSaveRef = useRef<Promise<void> | null>(null);
   const shouldFollowTodayRef = useRef(true);
   const [windowMaximized, setWindowMaximized] = useState(false);
+  const [compactMode, setCompactMode] = useState(() => {
+    try { return localStorage.getItem('card-vendedor-compact-mode') === 'true'; }
+    catch { return false; }
+  });
+  const initialWindowModeApplied = useRef(false);
   const [draft, setDraft] = useState<DailyEntry>(EMPTY_ENTRY(todayISO()));
   const [draftDirty, setDraftDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -104,12 +112,31 @@ function App() {
   }, []);
 
   useEffect(() => {
+    document.body.classList.toggle('compact-window', compactMode);
+    return () => document.body.classList.remove('compact-window');
+  }, [compactMode]);
+
+  // Restaura o formato escolhido pelo atendente na última utilização.
+  useEffect(() => {
+    if (!loaded || initialWindowModeApplied.current || !isTauri()) return;
+    initialWindowModeApplied.current = true;
+    void invoke('set_window_mode', { compact: compactMode }).catch((error) => {
+      setNotice(`Não foi possível restaurar o formato da janela: ${String(error)}`);
+    });
+  }, [loaded, compactMode]);
+
+  useEffect(() => {
     let active = true;
     loadState()
       .then((loadedState) => {
         if (!active) return;
         setAppState(loadedState);
         if (!loadedState.profile) {
+          // A configuração inicial precisa de espaço para o formulário completo.
+          if (compactMode) {
+            setCompactMode(false);
+            try { localStorage.setItem('card-vendedor-compact-mode', 'false'); } catch { /* preferência opcional */ }
+          }
           setProfileDraft(emptyProfile());
           setProfileModal(true);
         }
@@ -140,23 +167,34 @@ function App() {
     setSaving(true);
     const revision = draftRevisionRef.current;
     const snapshot: DailyEntry = { ...draft, date: selectedDate, updatedAt: new Date().toISOString() };
-    const timeout = window.setTimeout(async () => {
-      try {
-        await saveEntry(snapshot);
-        setAppState((current) => ({
-          ...current,
-          entries: [...current.entries.filter((entry) => entry.date !== selectedDate), snapshot]
-            .sort((a, b) => b.date.localeCompare(a.date)),
-        }));
-        if (draftRevisionRef.current === revision) setDraftDirty(false);
-        setSaving(false);
-      } catch (error) {
-        if (draftRevisionRef.current === revision) setDraftDirty(false);
-        setSaving(false);
-        setNotice(`Falha no salvamento automático: ${String(error)}`);
-      }
+    const timeout = window.setTimeout(() => {
+      saveTimeoutRef.current = null;
+      const operation = (async () => {
+        try {
+          await saveEntry(snapshot);
+          setAppState((current) => ({
+            ...current,
+            entries: [...current.entries.filter((entry) => entry.date !== selectedDate), snapshot]
+              .sort((a, b) => b.date.localeCompare(a.date)),
+          }));
+          if (draftRevisionRef.current === revision) setDraftDirty(false);
+          setSaving(false);
+        } catch (error) {
+          if (draftRevisionRef.current === revision) setDraftDirty(false);
+          setSaving(false);
+          setNotice(`Falha no salvamento automático: ${String(error)}`);
+        }
+      })();
+      activeSaveRef.current = operation;
+      void operation.finally(() => {
+        if (activeSaveRef.current === operation) activeSaveRef.current = null;
+      });
     }, 220);
-    return () => window.clearTimeout(timeout);
+    saveTimeoutRef.current = timeout;
+    return () => {
+      window.clearTimeout(timeout);
+      if (saveTimeoutRef.current === timeout) saveTimeoutRef.current = null;
+    };
   }, [draft, draftDirty, selectedDate, appState.profile]);
 
   const orderedEntries = useMemo(
@@ -179,6 +217,20 @@ function App() {
 
   const notify = (message: string) => setNotice(message);
 
+  const switchDisplayMode = async (compact: boolean) => {
+    try {
+      if (isTauri()) await invoke('set_window_mode', { compact });
+      try { localStorage.setItem('card-vendedor-compact-mode', String(compact)); } catch { /* preferência opcional */ }
+      setTab('entry');
+      setWindowMaximized(false);
+      setCompactMode(compact);
+      return true;
+    } catch (error) {
+      notify(`Não foi possível alterar o formato da janela: ${String(error)}`);
+      return false;
+    }
+  };
+
   const updateValue = (field: EntryField, value: number) => {
     draftRevisionRef.current += 1;
     const safeValue = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
@@ -200,7 +252,8 @@ function App() {
     }
   };
 
-  const openCampaignSettings = (month = selectedMonth) => {
+  const openCampaignSettings = async (month = selectedMonth) => {
+    if (compactMode && !(await switchDisplayMode(false))) return;
     const existing = appState.monthlyProducts.find((product) => product.month === month);
     setCampaignDraft(existing ? { ...existing } : emptyMonthlyProduct(month));
     setCampaignModal(true);
@@ -230,7 +283,8 @@ function App() {
     }
   };
 
-  const openProfile = () => {
+  const openProfile = async () => {
+    if (compactMode && !(await switchDisplayMode(false))) return;
     setProfileDraft(appState.profile ? {
       ...appState.profile,
       targets: { ...appState.profile.targets },
@@ -258,27 +312,151 @@ function App() {
     }
   };
 
+  const normalizeBackup = (raw: unknown): AppState => {
+    if (!raw || typeof raw !== 'object') throw new Error('O arquivo não contém um objeto JSON válido.');
+    const backup = raw as Record<string, unknown>;
+    if (backup.app !== 'Card do Vendedor' || !Array.isArray(backup.entries)) {
+      throw new Error('O arquivo selecionado não é um backup do Card do Vendedor. Selecione o arquivo JSON exportado pelo aplicativo.');
+    }
+    const wholeNumber = (value: unknown, label: string) => {
+      const number = Number(value ?? 0);
+      if (!Number.isFinite(number) || number < 0 || !Number.isInteger(number)) {
+        throw new Error(`O campo “${label}” contém uma quantidade inválida.`);
+      }
+      return number;
+    };
+    const percentage = (value: unknown, label: string) => {
+      const number = Number(value ?? 0);
+      if (!Number.isFinite(number) || number < 0) throw new Error(`A meta de ${label} é inválida.`);
+      return number;
+    };
+
+    let profile: Profile | null = null;
+    if (backup.profile !== null && backup.profile !== undefined) {
+      if (typeof backup.profile !== 'object') throw new Error('Os dados de identificação do backup estão inválidos.');
+      const source = backup.profile as Record<string, unknown>;
+      const sourceTargets = (source.targets && typeof source.targets === 'object' ? source.targets : {}) as Record<string, unknown>;
+      profile = {
+        name: String(source.name ?? '').trim(),
+        agency: String(source.agency ?? ''),
+        targets: {
+          sedex: percentage(sourceTargets.sedex ?? DEFAULT_TARGETS.sedex, 'SEDEX'),
+          premium: percentage(sourceTargets.premium ?? DEFAULT_TARGETS.premium, 'Premium'),
+          vd: percentage(sourceTargets.vd ?? DEFAULT_TARGETS.vd, 'VD'),
+          ar: percentage(sourceTargets.ar ?? DEFAULT_TARGETS.ar, 'AR'),
+          packaging: percentage(sourceTargets.packaging ?? DEFAULT_TARGETS.packaging, 'Embalagem'),
+        },
+      };
+      if (!profile.name) throw new Error('O backup não contém o nome do atendente.');
+    }
+
+    const entries: DailyEntry[] = backup.entries.map((item, index) => {
+      if (!item || typeof item !== 'object') throw new Error(`O lançamento ${index + 1} está inválido.`);
+      const source = item as Record<string, unknown>;
+      const date = String(source.date ?? '');
+      const [year, month, day] = date.split('-').map(Number);
+      const parsedDate = new Date(year, month - 1, day);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || parsedDate.getFullYear() !== year || parsedDate.getMonth() !== month - 1 || parsedDate.getDate() !== day) {
+        throw new Error(`A data do lançamento ${index + 1} está inválida.`);
+      }
+      return {
+        date,
+        pac: wholeNumber(source.pac, 'PAC'),
+        sedex: wholeNumber(source.sedex, 'SEDEX'),
+        premium: wholeNumber(source.premium, 'Premium'),
+        vd: wholeNumber(source.vd, 'VD'),
+        ar: wholeNumber(source.ar, 'AR'),
+        packaging: wholeNumber(source.packaging, 'Embalagem'),
+        monthlyProductQty: wholeNumber(source.monthlyProductQty ?? source.cellular, 'Produto sazonal'),
+        updatedAt: String(source.updatedAt ?? new Date().toISOString()),
+      };
+    });
+
+    if (backup.monthlyProducts !== undefined && !Array.isArray(backup.monthlyProducts)) {
+      throw new Error('A lista de produtos sazonais do backup está inválida.');
+    }
+    const monthlyProducts: MonthlyProduct[] = Array.isArray(backup.monthlyProducts)
+      ? backup.monthlyProducts.map((item, index) => {
+          if (!item || typeof item !== 'object') throw new Error(`A configuração sazonal ${index + 1} está inválida.`);
+          const source = item as Record<string, unknown>;
+          const month = String(source.month ?? '');
+          const name = String(source.name ?? '').trim();
+          if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !name) {
+            throw new Error(`A configuração sazonal ${index + 1} está inválida.`);
+          }
+          return { month, name, target: wholeNumber(source.target, `Meta de ${name}`) };
+        })
+      : [];
+
+    const uniqueDates = new Set(entries.map((entry) => entry.date));
+    if (uniqueDates.size !== entries.length) throw new Error('O backup contém mais de um lançamento para a mesma data.');
+    const uniqueMonths = new Set(monthlyProducts.map((product) => product.month));
+    if (uniqueMonths.size !== monthlyProducts.length) throw new Error('O backup contém configurações sazonais duplicadas para o mesmo mês.');
+    return { profile, entries, monthlyProducts };
+  };
+
+  const restoreBackupText = async (contents: string) => {
+    const parsed: unknown = JSON.parse(contents);
+    const restored = normalizeBackup(parsed);
+    const summary = `${restored.entries.length} dia(s) registrado(s), ${restored.monthlyProducts.length} configuração(ões) de produto sazonal`;
+    if (!window.confirm(`O backup contém ${summary}.\n\nA restauração substituirá os dados atuais deste computador. Deseja continuar?`)) return;
+    draftRevisionRef.current += 1;
+    if (saveTimeoutRef.current !== null) {
+      window.clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (activeSaveRef.current) {
+      await activeSaveRef.current;
+    } else if (draftDirty && appState.profile) {
+      await saveEntry({ ...draft, date: selectedDate, updatedAt: new Date().toISOString() });
+    }
+    setDraftDirty(false);
+    setSaving(false);
+    await replaceState(restored);
+    const refreshed = await loadState();
+    setAppState(refreshed);
+    draftRevisionRef.current += 1;
+    setDraft(refreshed.entries.find((entry) => entry.date === selectedDate) ?? EMPTY_ENTRY(selectedDate));
+    setDraftDirty(false);
+    if (refreshed.profile) setProfileModal(false);
+    else setProfileModal(true);
+    notify(`Backup restaurado: ${summary}.`);
+  };
+
   const handleBackupRestore = async (file?: File) => {
     if (!file) return;
     try {
-      const backup = JSON.parse(await file.text()) as AppState & { app?: string; backupVersion?: number };
-      if (backup.app !== 'Card do Vendedor' || !Array.isArray(backup.entries)) {
-        throw new Error('O arquivo selecionado não é um backup válido do Card do Vendedor.');
-      }
-      if (!window.confirm('A restauração substituirá os dados atuais deste computador. Deseja continuar?')) return;
-      const restored: AppState = { profile: backup.profile ?? null, entries: backup.entries.map((entry: DailyEntry & { cellular?: number }) => ({ ...entry, monthlyProductQty: entry.monthlyProductQty ?? entry.cellular ?? 0 })), monthlyProducts: Array.isArray(backup.monthlyProducts) ? backup.monthlyProducts : [] };
-      await replaceState(restored);
-      setAppState(restored);
-      draftRevisionRef.current += 1;
-      setDraft(restored.entries.find((entry) => entry.date === selectedDate) ?? EMPTY_ENTRY(selectedDate));
-      setDraftDirty(false);
-      if (restored.profile) setProfileModal(false);
-      else setProfileModal(true);
-      notify('Backup restaurado.');
+      const contents = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Não foi possível ler o conteúdo do arquivo.'));
+        reader.onerror = () => reject(reader.error ?? new Error('Falha ao ler o arquivo selecionado.'));
+        reader.readAsText(file, 'UTF-8');
+      });
+      await restoreBackupText(contents);
     } catch (error) {
-      notify(`Não foi possível restaurar o backup: ${String(error)}`);
+      notify(`Não foi possível restaurar o backup: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       if (backupInput.current) backupInput.current.value = '';
+    }
+  };
+
+  const chooseBackupToRestore = async () => {
+    try {
+      if (!isTauri()) {
+        backupInput.current?.click();
+        return;
+      }
+      const selected = await showOpenDialog({
+        title: 'Selecionar backup do Card do Vendedor',
+        multiple: false,
+        directory: false,
+        filters: [{ name: 'Backup do Card do Vendedor', extensions: ['json'] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const contents = await invoke<string>('read_backup_file', { path: selected });
+      await restoreBackupText(contents);
+    } catch (error) {
+      notify(`Não foi possível restaurar o backup: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -332,70 +510,110 @@ function App() {
   }
 
   return (
-    <main className={`app-shell ${windowMaximized ? 'is-maximized' : ''}`}>
+    <main className={`app-shell ${windowMaximized ? 'is-maximized' : ''} ${compactMode ? 'compact-mode' : ''}`}>
 
-      <header
-        className="window-header"
-        onMouseDown={startWindowDrag}
-        onDoubleClick={(event) => {
-          if (!(event.target as HTMLElement).closest('button')) void toggleWindowSize();
-        }}
-      >
-        <div className="brand-mark"><Truck size={19} strokeWidth={2.2} /></div>
-        <div className="brand-title">
-          <strong>Card do Vendedor</strong>
-          <span>Painel rápido · Correios</span>
-        </div>
-        <div className="header-actions">
-          <button className="window-control settings-control" title="Identificação e metas" onClick={openProfile}><Settings2 size={17} /></button>
-          <button className="window-control" title="Minimizar janela" onClick={minimizeWindow}><Minus size={17} /></button>
-          <button className="window-control" title={windowMaximized ? 'Restaurar janela' : 'Maximizar janela'} onClick={toggleWindowSize}>{windowMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-          <button className="window-control close-button" title="Ocultar na bandeja" onClick={hideWindow}><X size={17} /></button>
-        </div>
-      </header>
+      {compactMode ? (
+        <header
+          className="compact-header"
+          onMouseDown={startWindowDrag}
+        >
+          <div className="compact-brand" title={saving || draftDirty ? 'Salvando lançamento…' : 'Lançamentos salvos automaticamente'}>
+            <Truck size={14} strokeWidth={2.4} />
+            <strong>Card do Vendedor</strong>
+            <span className={`compact-save-dot ${saving || draftDirty ? 'is-saving' : ''}`} />
+          </div>
+          <label className="compact-date" title="Data do lançamento">
+            <CalendarDays size={11} />
+            <input
+              aria-label="Data do lançamento"
+              type="date"
+              value={selectedDate}
+              onChange={(event) => { shouldFollowTodayRef.current = event.target.value === systemDate; setSelectedDate(event.target.value); }}
+            />
+          </label>
+          <div className="compact-window-actions">
+            <button className="compact-window-button" title="Identificação e metas" onClick={openProfile}><Settings2 size={13} /></button>
+            <button className="compact-window-button" title="Restaurar painel completo" onClick={() => void switchDisplayMode(false)}><Maximize2 size={13} /></button>
+            <button className="compact-window-button compact-hide" title="Ocultar na bandeja" onClick={hideWindow}><X size={13} /></button>
+          </div>
+        </header>
+      ) : (
+        <header
+          className="window-header"
+          onMouseDown={startWindowDrag}
+          onDoubleClick={(event) => {
+            if (!(event.target as HTMLElement).closest('button')) void toggleWindowSize();
+          }}
+        >
+          <div className="brand-mark"><Truck size={19} strokeWidth={2.2} /></div>
+          <div className="brand-title">
+            <strong>Card do Vendedor</strong>
+            <span>Painel rápido · Correios</span>
+          </div>
+          <div className="header-profile">
+            <div className="avatar">{appState.profile?.name?.slice(0, 1).toLocaleUpperCase('pt-BR') || 'A'}</div>
+            <div className="profile-info">
+              <strong>{appState.profile?.name || 'Configure seu perfil'}</strong>
+              <span>{appState.profile?.agency || 'Agência não informada'}</span>
+            </div>
+            <div className="local-status"><span className="status-dot" /> Local</div>
+          </div>
+          <nav className="tabs top-tabs" aria-label="Navegação principal">
+            <button className={tab === 'entry' ? 'tab active' : 'tab'} onClick={() => setTab('entry')}><Plus size={14} /> Lançar</button>
+            <button className={tab === 'history' ? 'tab active' : 'tab'} onClick={() => setTab('history')}><History size={14} /> Histórico</button>
+            <button className={tab === 'report' ? 'tab active' : 'tab'} onClick={() => setTab('report')}><FileSpreadsheet size={14} /> Relatório</button>
+          </nav>
+          <div className="header-actions">
+            <button className="window-control settings-control" title="Identificação e metas" onClick={openProfile}><Settings2 size={17} /></button>
+            <button className="window-control compact-toggle" title="Modo compacto · aproximadamente 10 × 3 cm" onClick={() => void switchDisplayMode(true)}><Minimize2 size={16} /></button>
+            <button className="window-control" title="Minimizar janela" onClick={minimizeWindow}><Minus size={17} /></button>
+            <button className="window-control" title={windowMaximized ? 'Restaurar janela' : 'Maximizar janela'} onClick={toggleWindowSize}>{windowMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+            <button className="window-control close-button" title="Ocultar na bandeja" onClick={hideWindow}><X size={17} /></button>
+          </div>
+        </header>
+      )}
 
-      <section className="profile-strip">
-        <div className="avatar">{appState.profile?.name?.slice(0, 1).toLocaleUpperCase('pt-BR') || 'A'}</div>
-        <div className="profile-info">
-          <strong>{appState.profile?.name || 'Configure seu perfil'}</strong>
-          <span>{appState.profile?.agency || 'Agência não informada'}</span>
-        </div>
-        <div className="local-status"><span className="status-dot" /> Local</div>
-      </section>
-
-      <nav className="tabs" aria-label="Navegação principal">
-        <button className={tab === 'entry' ? 'tab active' : 'tab'} onClick={() => setTab('entry')}><Plus size={15} /> Lançar</button>
-        <button className={tab === 'history' ? 'tab active' : 'tab'} onClick={() => setTab('history')}><History size={15} /> Histórico</button>
-        <button className={tab === 'report' ? 'tab active' : 'tab'} onClick={() => setTab('report')}><FileSpreadsheet size={15} /> Relatório</button>
-      </nav>
-
-      <div className="content-area">
-        {tab === 'entry' && (
+      <div className={`content-area ${compactMode ? 'compact-content' : ''}`}>
+        {compactMode && tab === 'entry' && (
+          <div className="compact-service-grid" aria-label="Lançamentos rápidos">
+            {([...Object.keys(SERVICE_LABELS), 'monthlyProductQty'] as EntryField[]).map((field) => {
+              const isMonthlyProduct = field === 'monthlyProductQty';
+              const fieldLabel = isMonthlyProduct ? selectedMonthlyProduct.name : SERVICE_LABELS[field as keyof typeof SERVICE_LABELS];
+              const compactLabel = isMonthlyProduct
+                ? (fieldLabel.toLocaleUpperCase('pt-BR').includes('CHIP') ? 'CHIP' : fieldLabel.slice(0, 5).toLocaleUpperCase('pt-BR'))
+                : ({ pac: 'PAC', sedex: 'SEDEX', premium: 'PREM', vd: 'VD', ar: 'AR', packaging: 'EMB' } as const)[field as keyof typeof SERVICE_LABELS];
+              return (
+                <article className={`compact-service ${isMonthlyProduct ? 'compact-campaign' : ''}`} key={field}>
+                  {isMonthlyProduct ? (
+                    <button className="compact-service-label compact-product-label" title={`${fieldLabel} · Meta ${selectedMonthlyProduct.target || 'não definida'} unidades · Clique para configurar`} onClick={() => void openCampaignSettings(selectedMonth)}>{compactLabel}</button>
+                  ) : (
+                    <span className="compact-service-label" title={fieldLabel}>{compactLabel}</span>
+                  )}
+                  <div className="compact-count-line">
+                    <strong className="compact-count" aria-live="polite">{draft[field]}</strong>
+                  </div>
+                  <button className="compact-increment" aria-label={`Registrar mais um: ${fieldLabel}`} title={`Registrar mais um: ${fieldLabel}`} onClick={() => updateValue(field, draft[field] + 1)}>+1</button>
+                </article>
+              );
+            })}
+          </div>
+        )}
+        {!compactMode && tab === 'entry' && (
           <>
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">APONTAMENTO DIÁRIO</p>
+            <div className="section-heading quick-entry-heading">
+              <div className="quick-heading-copy">
+                <p className="eyebrow">APONTAMENTO DO DIA</p>
                 <h1>Lançamentos</h1>
-                <p className="section-subtitle">Registre as quantidades realizadas no dia.</p>
               </div>
               <div className="date-control">
-                <CalendarDays size={17} />
+                <CalendarDays size={16} />
                 <input aria-label="Data do lançamento" type="date" value={selectedDate} onChange={(event) => { shouldFollowTodayRef.current = event.target.value === systemDate; setSelectedDate(event.target.value); }} />
                 <button type="button" className={selectedDate === systemDate ? 'today-button today-active' : 'today-button'} onClick={() => { shouldFollowTodayRef.current = true; setSelectedDate(systemDate); }} title="Ir para a data de hoje">Hoje</button>
               </div>
+              <span className="quick-save-state"><ShieldCheck size={14} /> {saving || draftDirty ? 'Salvando…' : 'Salvo automaticamente'}</span>
             </div>
 
-            <section className="campaign-config-strip">
-              <div className="campaign-config-copy">
-                <span className="campaign-kicker">PRODUTO SAZONAL · {formatMonth(selectedMonth)}</span>
-                <strong>{selectedMonthlyProduct.name}</strong>
-                <span>Meta: {selectedMonthlyProduct.target > 0 ? `${selectedMonthlyProduct.target} unidades` : 'não definida'} · Registrado: {selectedProductTotal} unidades</span>
-                {selectedMonthlyProduct.target > 0 && <div className="campaign-progress" aria-label={`${Math.round(selectedProductProgress)}% da meta alcançada`}><span style={{ width: `${selectedProductProgress}%` }} /></div>}
-              </div>
-              <button className="campaign-edit-button" onClick={() => openCampaignSettings(selectedMonth)}><Settings2 size={16} /> Alterar</button>
-            </section>
-
-            <div className="service-grid">
+            <div className="service-grid quick-service-grid">
               {([...Object.keys(SERVICE_LABELS), 'monthlyProductQty'] as EntryField[]).map((field) => {
                 const isMonthlyProduct = field === 'monthlyProductQty';
                 const fieldLabel = isMonthlyProduct ? selectedMonthlyProduct.name : SERVICE_LABELS[field as keyof typeof SERVICE_LABELS];
@@ -415,10 +633,14 @@ function App() {
                     <div className="service-title-row">
                       <span className={`service-symbol symbol-${isMonthlyProduct ? 'cellular' : field}`}>{isMonthlyProduct ? <Smartphone size={16} /> : field === 'pac' || field === 'sedex' ? <Truck size={16} /> : <Archive size={16} />}</span>
                       <div className="service-title">
-                        <strong>{fieldLabel}</strong>
-                        <span>{descriptor}</span>
+                        <strong title={fieldLabel}>{fieldLabel}</strong>
+                        <span title={descriptor}>{isMonthlyProduct
+                          ? `${selectedMonthlyProduct.target > 0 ? `Meta ${selectedMonthlyProduct.target}` : 'Sem meta'} · ${selectedProductTotal} no mês`
+                          : descriptor}</span>
                       </div>
+                      {isMonthlyProduct && <button className="campaign-edit-mini" onClick={() => openCampaignSettings(selectedMonth)} title="Alterar produto e meta"><Settings2 size={14} /></button>}
                     </div>
+                    {isMonthlyProduct && selectedMonthlyProduct.target > 0 && <div className="campaign-progress" aria-label={`${Math.round(selectedProductProgress)}% da meta alcançada`}><span style={{ width: `${selectedProductProgress}%` }} /></div>}
                     <div className="counter-row">
                       <button className="counter-button" aria-label={`Diminuir ${fieldLabel}`} onClick={() => updateValue(field, draft[field] - 1)} disabled={draft[field] <= 0}><Minus size={16} /></button>
                       <input
@@ -437,11 +659,10 @@ function App() {
               })}
             </div>
 
-            <div className="calculation-note">
-              <Activity size={16} />
-              <span><strong>Um toque = um lançamento.</strong> Use +1 a cada postagem ou produto vendido. O aplicativo salva automaticamente; use o número para corrigir uma quantidade.</span>
+            <div className="quick-entry-footnote">
+              <span><Activity size={13} /> Um toque em +1 registra uma postagem ou venda.</span>
+              <span>Use o número para corrigir a quantidade.</span>
             </div>
-            <div className="save-hint"><ShieldCheck size={14} /> {saving || draftDirty ? 'Salvando…' : 'Tudo salvo automaticamente neste computador.'}</div>
           </>
         )}
 
@@ -525,10 +746,10 @@ function App() {
         )}
       </div>
 
-      <footer className="app-footer">
+      {!compactMode && <footer className="app-footer">
         <span><CloudOff size={13} /> Funciona sem internet</span>
         <button onClick={openProfile}><Target size={13} /> Metas e perfil</button>
-      </footer>
+      </footer>}
 
       {notice && <div className="toast" role="status">{notice}</div>}
 
@@ -574,7 +795,7 @@ function App() {
             <button className="primary-button modal-save" onClick={persistProfile}><Check size={16} /> Salvar configuração</button>
             <div className="backup-tools">
               <button onClick={saveBackup}><ArrowDownToLine size={14} /> Exportar backup dos dados</button>
-              <button onClick={() => backupInput.current?.click()}><Archive size={14} /> Restaurar backup</button>
+              <button onClick={chooseBackupToRestore}><Archive size={14} /> Restaurar backup</button>
               <input ref={backupInput} type="file" accept="application/json,.json" hidden onChange={(event) => handleBackupRestore(event.target.files?.[0])} />
             </div>
           </section>

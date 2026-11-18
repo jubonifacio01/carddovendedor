@@ -4,7 +4,7 @@ use std::{fs, path::PathBuf};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,44 +217,70 @@ fn save_monthly_product(app: AppHandle, product: MonthlyProduct) -> Result<(), S
 }
 
 #[tauri::command]
-fn replace_state(
-    app: AppHandle,
-    profile: Option<Profile>,
-    entries: Vec<DailyEntry>,
-    monthly_products: Vec<MonthlyProduct>,
-) -> Result<(), String> {
-    for entry in &entries {
+fn replace_state(app: AppHandle, state: AppState) -> Result<(), String> {
+    for entry in &state.entries {
         validate_entry(entry)?;
     }
+    if let Some(profile) = &state.profile {
+        if profile.name.trim().is_empty() {
+            return Err("O backup não contém o nome do atendente.".into());
+        }
+        let targets = [profile.targets.sedex, profile.targets.premium, profile.targets.vd, profile.targets.ar, profile.targets.packaging];
+        if targets.iter().any(|target| !target.is_finite() || *target < 0.0) {
+            return Err("O backup contém uma meta inválida.".into());
+        }
+    }
+    for product in &state.monthly_products {
+        if product.month.len() != 7
+            || product.month.chars().nth(4) != Some('-')
+            || product.name.trim().is_empty()
+            || product.target < 0
+        {
+            return Err("Há uma configuração de produto mensal inválida no backup.".into());
+        }
+    }
+
     let mut conn = open_db(&app)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM entries", []).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM profile", []).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM monthly_products", []).map_err(|e| e.to_string())?;
-    if let Some(profile) = profile {
-        let payload = serde_json::to_string(&profile).map_err(|e| e.to_string())?;
+
+    if let Some(profile) = &state.profile {
+        let payload = serde_json::to_string(profile).map_err(|e| e.to_string())?;
         tx.execute("INSERT INTO profile (id, payload) VALUES (1, ?1)", params![payload])
             .map_err(|e| e.to_string())?;
     }
-    for entry in entries {
+    for entry in &state.entries {
         tx.execute(
             "INSERT INTO entries (date, pac, sedex, premium, vd, ar, packaging, cellular, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![entry.date, entry.pac, entry.sedex, entry.premium, entry.vd, entry.ar, entry.packaging, entry.monthly_product_qty, entry.updated_at],
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Não foi possível importar o lançamento de {}: {e}", entry.date))?;
     }
-    for product in monthly_products {
-        if product.month.len() != 7 || product.month.chars().nth(4) != Some('-') || product.name.trim().is_empty() || product.target < 0 {
-            return Err("Há uma configuração de produto mensal inválida no backup.".into());
-        }
+    for product in &state.monthly_products {
         tx.execute(
             "INSERT INTO monthly_products (month, name, target) VALUES (?1, ?2, ?3)",
             params![product.month, product.name.trim(), product.target],
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| format!("Não foi possível importar a configuração de {}: {e}", product.month))?;
     }
-    tx.commit().map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| format!("Não foi possível concluir a restauração: {e}"))?;
     Ok(())
+}
+
+#[tauri::command]
+fn read_backup_file(path: String) -> Result<String, String> {
+    let source = PathBuf::from(path);
+    let extension = source.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("json") {
+        return Err("Selecione um arquivo de backup com extensão .json.".into());
+    }
+    let metadata = fs::metadata(&source).map_err(|e| format!("Não foi possível acessar o arquivo: {e}"))?;
+    if metadata.len() > 10 * 1024 * 1024 {
+        return Err("O arquivo de backup é maior que o limite de 10 MB.".into());
+    }
+    fs::read_to_string(&source).map_err(|e| format!("Não foi possível ler o backup: {e}"))
 }
 
 #[tauri::command]
@@ -271,6 +297,34 @@ fn save_export_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
     fs::write(destination, bytes).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn set_window_mode(app: AppHandle, compact: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "A janela principal não foi encontrada.".to_string())?;
+
+    // Garante que set_size altere o tamanho visível, mesmo se o painel estiver maximizado.
+    let _ = window.unmaximize();
+
+    if compact {
+        // 10 × 3 cm aproximados em unidades lógicas (96 DPI): 378 × 113 px.
+        window.set_min_size(Some(LogicalSize::new(378.0, 113.0))).map_err(|e| e.to_string())?;
+        window.set_size(LogicalSize::new(378.0, 113.0)).map_err(|e| e.to_string())?;
+        window.set_max_size(Some(LogicalSize::new(378.0, 113.0))).map_err(|e| e.to_string())?;
+        window.set_resizable(false).map_err(|e| e.to_string())?;
+    } else {
+        let full_size = LogicalSize::new(1080.0, 270.0);
+        window.set_max_size(None::<LogicalSize<f64>>).map_err(|e| e.to_string())?;
+        window.set_min_size(Some(LogicalSize::new(1000.0, 250.0))).map_err(|e| e.to_string())?;
+        window.set_resizable(true).map_err(|e| e.to_string())?;
+        window.set_size(full_size).map_err(|e| e.to_string())?;
+    }
+
+    let _ = window.set_always_on_top(true);
+    position_panel_near_taskbar(&window);
+    Ok(())
+}
+
 fn position_panel_near_taskbar(window: &WebviewWindow) {
     // Posiciona o painel sobre a área de trabalho, acima da barra de tarefas.
     // Usa o monitor principal como fallback quando a janela ainda está oculta.
@@ -282,7 +336,7 @@ fn position_panel_near_taskbar(window: &WebviewWindow) {
 
     if let Some(monitor) = monitor {
         let work_area = monitor.work_area();
-        let size = window.outer_size().unwrap_or(PhysicalSize::new(445, 700));
+        let size = window.outer_size().unwrap_or(PhysicalSize::new(1080, 270));
         let margin = 12_i32;
         let work_x = work_area.position.x;
         let work_y = work_area.position.y;
@@ -361,7 +415,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![load_state, save_profile, save_entry, save_monthly_product, delete_entry, replace_state, save_export_file])
+        .invoke_handler(tauri::generate_handler![load_state, save_profile, save_entry, save_monthly_product, delete_entry, replace_state, read_backup_file, save_export_file, set_window_mode])
         .run(tauri::generate_context!())
         .expect("erro ao executar Card do Vendedor");
 }
